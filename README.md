@@ -1,2 +1,35 @@
-# Analysis-User-Behavior-Data-from-Taobao
-This repository is for practiceing the GitHub Flow
+# 淘宝用户行为漏斗与复购分析
+
+## 项目背景
+基于阿里云天池公开数据集，模拟电商平台数据分析岗工作。从流量转化和用户价值两大维度，为业务方提供可落地的运营策略。
+
+## 分析框架
+- **流量转化漏斗**：点击 → 收藏 → 加购 → 购买，计算各环节UV及转化率
+- **用户复购行为**：整体复购率、同期群留存热力图
+- **用户价值分层**：基于RFM模型将用户分为8类，识别高价值群体
+
+## 数据来源
+- [阿里云天池-淘宝用户行为数据集](https://tianchi.aliyun.com/dataset/649)
+- 字段：用户ID、商品ID、类目ID、行为类型（pv, fav, cart, buy）、时间戳
+
+## 技术栈
+- **SQL** (SQLite)：窗口函数、CTE、漏斗计算、复购统计
+- **Python**：Pandas 数据清洗、NumPy 数值计算、Matplotlib/Seaborn/Plotly 可视化
+- **业务指标**：PV/UV、跳失率、转化率、复购率、同期群分析、RFM分层
+
+## 核心结论
+1. 从点击到购买的总体转化率为 2.1%，**加购到购买流失最严重（仅30%转化）**，建议优化购物车提醒机制。
+2. 用户首次购买后，**次日留存仅 5.7%**，7日留存不足 2%，需加强购后引导（如关联推荐）。
+3. RFM分层显示，**“重要价值用户”（R高F高）占比6%但贡献了38%的购买**，可建立VIP群提供专属折扣。
+
+## 项目结构
+- `analysis_notebook.ipynb`：完整数据分析与建模
+- `images/`：可视化图表及仪表板截图
+- `README.md`：项目报告
+
+## 运行方法
+1. 从上述链接下载 UserBehavior.csv 放入 `data/` 目录
+2. 安装依赖：`pip install pandas numpy matplotlib seaborn plotly scikit-learn`
+3. 运行 Jupyter Notebook 并按步骤执行
+
+*作者：Yang | 应用统计本科 | 2026年4月*
