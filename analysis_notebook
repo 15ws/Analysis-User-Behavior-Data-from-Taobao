@@ -1,0 +1,246 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "d5eaa1b4",
+   "metadata": {},
+   "source": [
+    "# 导入数据与基本清洗"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4560a290",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas as pd\n",
+    "import numpy  as np\n",
+    "import sqlite3\n",
+    "# 读取\n",
+    "df = pd.read_csv('UserBehavior.csv',names=['user_id','item_id','category_id','behavior','timestamp'],header=None)\n",
+    "\n",
+    "# 原始 timestamp 是Unix秒数\n",
+    "df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')\n",
+    "df['date'] = df['timestamp'].dt.date\n",
+    "df['hour'] = df['timestamp'].dt.hour\n",
+    "\n",
+    "# 查看缺失值和重复值\n",
+    "print(df.isnull().sum())\n",
+    "df.drop_duplicates(inplace=True)\n",
+    "\n",
+    "# 删除异常时间（如超出范围）\n",
+    "df = df[(df['timestamp'] >= '2017-11-25') & (df['timestamp'] <= '2017-12-03')]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "0da99775",
+   "metadata": {},
+   "source": [
+    "# SQL"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8e0397c9",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# 清洗后的 DataFrame 导入 SQLite\n",
+    "\n",
+    "conn = sqlite3.connect(':memory:')\n",
+    "df.to_sql('user_behavior', conn, index=False, if_exists='replace')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "57cca986",
+   "metadata": {},
+   "source": [
+    "## 用SQL计算PV、UV、跳失率"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "5a339760",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "query_pv_uv = \"\"\"\n",
+    "SELECT \n",
+    "    date,\n",
+    "    COUNT(*) AS pv,\n",
+    "    COUNT(DISTINCT user_id) AS uv,\n",
+    "    ROUND(CAST(COUNT(*) AS FLOAT) / COUNT(DISTINCT user_id), 2) AS avg_pv_per_user\n",
+    "FROM user_behavior\n",
+    "WHERE behavior = 'pv'\n",
+    "GROUP BY date\n",
+    "ORDER BY date;\n",
+    "\"\"\"\n",
+    "# 执行SQL并转回dataframe\n",
+    "pv_uv_df = pd.read_sql(query_pv_uv, conn)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9f17a741",
+   "metadata": {},
+   "source": [
+    "## 漏斗分析"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f19927f6",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "funnel_query = \"\"\"\n",
+    "SELECT \n",
+    "    '1-点击' AS stage, COUNT(DISTINCT user_id) AS users FROM user_behavior WHERE behavior='pv'\n",
+    "UNION ALL\n",
+    "SELECT \n",
+    "    '2-收藏', COUNT(DISTINCT user_id) FROM user_behavior WHERE behavior='fav'\n",
+    "UNION ALL\n",
+    "SELECT \n",
+    "    '3-加购', COUNT(DISTINCT user_id) FROM user_behavior WHERE behavior='cart'\n",
+    "UNION ALL\n",
+    "SELECT \n",
+    "    '4-购买', COUNT(DISTINCT user_id) FROM user_behavior WHERE behavior='buy';\n",
+    "\"\"\"\n",
+    "funnel_df = pd.read_sql(funnel_query, conn)\n",
+    "funnel_df['转化率'] = funnel_df['users'] / funnel_df['users'].iloc[0] * 100\n",
+    "print(funnel_df)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5a2d9b92",
+   "metadata": {},
+   "source": [
+    "## 复购率"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "dd04f570",
+   "metadata": {
+    "vscode": {
+     "languageId": "sql"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "repurchase_query = \"\"\"\n",
+    "WITH user_buy_times AS (\n",
+    "    SELECT user_id, COUNT(*) AS buy_cnt\n",
+    "    FROM user_behavior\n",
+    "    WHERE behavior = 'buy'\n",
+    "    GROUP BY user_id\n",
+    ")\n",
+    "SELECT \n",
+    "    SUM(CASE WHEN buy_cnt >= 2 THEN 1 ELSE 0 END) AS repurchase_users,\n",
+    "    COUNT(*) AS total_buy_users,\n",
+    "    ROUND(CAST(SUM(CASE WHEN buy_cnt >= 2 THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*), 3) AS repurchase_rate\n",
+    "FROM user_buy_times;\n",
+    "\"\"\"\n",
+    "repur_df = pd.read_sql(repurchase_query, conn)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "098dcaa2",
+   "metadata": {},
+   "source": [
+    "# Python数据分析"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d7f146a3",
+   "metadata": {},
+   "source": [
+    "## 同期群留存热力图\n",
+    "定义“首日购买”为用户首次购买日期，然后看他们在次日、3日、7日是否再次购买。"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "60bb9af2",
+   "metadata": {
+    "vscode": {
+     "languageId": "sql"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# 先拿到每个用户首次购买日期\n",
+    "first_buy = df[df.behavior=='buy'].groupby('user_id')['date'].min().reset_index()\n",
+    "first_buy.columns = ['user_id','first_date']\n",
+    "df_buy = df[df.behavior=='buy']\n",
+    "df_buy = df_buy.merge(first_buy, on='user_id')\n",
+    "df_buy['day_diff'] = (df_buy['date'] - df_buy['first_date']).dt.days\n",
+    "\n",
+    "# 生成留存矩阵\n",
+    "cohort_matrix = df_buy.groupby(['first_date','day_diff']).agg(user_count=('user_id','nunique')).reset_index()\n",
+    "cohort_pivot = cohort_matrix.pivot_table(index='first_date', columns='day_diff', values='user_count')\n",
+    "cohort_pivot = cohort_pivot.div(cohort_pivot[0], axis=0)  # 除以首日人数\n",
+    "# 用 seaborn 画热力图\n",
+    "import seaborn as sns\n",
+    "import matplotlib.pyplot as plt\n",
+    "plt.figure(figsize=(10,6))\n",
+    "sns.heatmap(cohort_pivot, annot=True, fmt='.0%', cmap='YlGnBu')\n",
+    "plt.title('用户购买同期群留存热力图')\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "441b1137",
+   "metadata": {},
+   "source": [
+    "## RFM 分层\n",
+    "这里 R：最近一次购买距今天数，F：购买频次，M 在数据集中无金额，可用购买次数替代（或假定 M=F）。"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0f0333ce",
+   "metadata": {
+    "vscode": {
+     "languageId": "sql"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "import datetime\n",
+    "snapshot_date = pd.Timestamp('2017-12-04')\n",
+    "buy_data = df[df.behavior=='buy']\n",
+    "rfm = buy_data.groupby('user_id').agg(\n",
+    "    last_buy=('date', 'max'),\n",
+    "    freq=('user_id', 'count')\n",
+    ").reset_index()\n",
+    "rfm['recency'] = (snapshot_date - pd.to_datetime(rfm['last_buy'])).dt.days\n",
+    "rfm['F_score'] = pd.qcut(rfm['freq'], 3, labels=[1,2,3])\n",
+    "rfm['R_score'] = pd.qcut(rfm['recency'].rank(method='first'), 3, labels=[3,2,1])  # 注意越近分越高\n",
+    "rfm['RFM'] = rfm['R_score'].astype(str) + rfm['F_score'].astype(str)\n",
+    "print(rfm.groupby('RFM')['user_id'].count())"
+   ]
+  }
+ ],
+ "metadata": {
+  "language_info": {
+   "name": "python"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
